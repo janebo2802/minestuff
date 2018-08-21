@@ -1,0 +1,124 @@
+var minAmountOfClicks = 2 // Minimal reasonable value to make checks. to increases performance.
+var minCost = 2 // The ceiling integer value will be used
+var minAmountOfconversions = 1
+var lookBackDays = 60
+var campaignSubstring = ''
+var phraseNegatives = false // fasle for [exact match], true for "prase match" negatives
+
+var endDate =new Date();
+endDate.setDate(endDate.getDate()-1);
+var startDate=new Date();
+startDate.setDate(startDate.getDate()-lookBackDays-1);
+
+function dateString(dateValue) {
+  // helper function to convert date to YYYYMMDD
+  var year = dateValue.getFullYear().toString();
+  var month = dateValue.getMonth() + 1;
+  month = (month < 10) ? "0" + month.toString() : month.toString();
+  var day = dateValue.getDate();
+  day = (day < 10) ? "0" + day.toString() : day.toString();
+  return year + month + day
+}
+
+minCost = Math.ceil(minCost) * 1000000;
+
+function main() {
+
+  // Get a List Of specified queries form the SEARCH_QUERY_PERFORMANCE_REPORT
+  // Building a selector
+
+  var selector =
+     'SELECT Query, CampaignId, CampaignName, Clicks, Conversions, AdGroupId, KeywordId, Cost ' +
+     'FROM  SEARCH_QUERY_PERFORMANCE_REPORT ' +
+       // Clicks, conversion and campaign substring conditions
+     'WHERE Conversions < ' + minAmountOfconversions + ' ' +
+     'AND Clicks > ' +  minAmountOfClicks + ' ' +
+     'AND Cost > ' +  minCost + ' ' +
+       ((campaignSubstring.length) ? 'AND CampaignName CONTAINS "' + campaignSubstring + '"' + ' ' : '' ) +
+     'DURING ' + dateString(startDate) + ',' + dateString(endDate)
+  // Running a report query
+  var queryReport = AdWordsApp.report(selector);
+
+  // Grouping queries by campaign
+  var rows = queryReport.rows()
+  var storage = {}; var counter = 0;
+  while (rows.hasNext()) {
+    var row = rows.next();
+    var skip = false;
+    // Check for enabled campaign
+    if (!storage[row.CampaignId]) {
+      var checkCampaign = AdWordsApp
+      .campaigns()
+      .withIds([row.CampaignId])
+      .get();
+      if (checkCampaign.hasNext()) {
+        checkCampaign = checkCampaign.next();
+        storage[row.CampaignId] = checkCampaign
+        var stats = checkCampaign.getStatsFor(dateString(startDate) ,dateString(endDate));
+        storage[row.CampaignId].campaignConversionRate = stats.getConversionRate();
+        storage[row.CampaignId].weightFactor = 2.0
+        var labels = checkCampaign.labels()
+          .withCondition("Name CONTAINS 'WF'")
+          .get();
+        if (labels.hasNext()) {
+          var wf = labels.next().getName().match(/WF\ (\d+\.*\d*$)/)
+          if (wf && wf[1] && !isNaN(wf[1])) {
+            storage[row.CampaignId].weightFactor = wf[1]
+          }
+        }
+      } else {
+        skip = true;
+      }
+    }
+    // continue processing if not deleted
+    if (!skip) {
+      var checkCampaign = storage[row.CampaignId];
+
+      if (!storage[row.CampaignId][row.AdGroupId]) {
+        var checkAdgroup = checkCampaign
+        .adGroups()
+        .withIds([row.AdGroupId])
+        .get();
+        if (checkAdgroup.hasNext) {
+          checkAdgroup = checkAdgroup.next();
+          storage[row.CampaignId][row.AdGroupId] = checkAdgroup;
+        } else {
+          skip = true
+        }
+      } else {
+        var checkAdgroup = storage[row.CampaignId][row.AdGroupId]
+      }
+      if (!skip) {
+        if (!storage[row.CampaignId][row.AdGroupId][row.KeywordId]) {
+          var checkKeyword = checkAdgroup
+          .keywords()
+          .withIds([[row.AdGroupId, row.KeywordId]])
+          .get();
+          if (checkKeyword.hasNext()) {
+            checkKeyword = checkKeyword.next();
+            storage[row.CampaignId][row.AdGroupId][row.KeywordId] = checkKeyword;
+          } else {
+            skip = true
+          }
+        } else {
+          var checkKeyword = storage[row.CampaignId][row.AdGroupId][row.KeywordId]
+        }
+        if (!skip) {
+          if (checkCampaign.isEnabled() && checkAdgroup.isEnabled() && checkKeyword.isEnabled()) {
+            var query = row.Query
+            query = (phraseNegatives) ? '"' + query + '"' : '[' + query + ']' ;
+            // Version Compatibility Log
+              Logger.log('candidate ' + query + ' required clicks: ' + Number(checkCampaign.weightFactor/checkCampaign.campaignConversionRate).toFixed(2));
+            // Updated Negation
+            if (row.Clicks > (checkCampaign.weightFactor/checkCampaign.campaignConversionRate)) {
+              Logger.log(query + ' added to campaign negatives')
+              checkCampaign.createNegativeKeyword(query);
+            }
+          }
+        }
+      }
+      counter++;
+    }
+  } // end of row processing
+  Logger.log(counter + ' queries processed')
+}
