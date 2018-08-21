@@ -1,0 +1,245 @@
+var BENCHMARK = 0.1 //-0.1 // stands for -10% drop
+var RECIPIENTS = ['postman31@gmail.com'] // Array of recipients, e.g. ['user1@example.com','user3@example.com','user3@example.com',]
+var FILTER_VALUE = '23'; // threshold for CombinedAdsOrganicQueries to be included in reports
+var TIME_LIMIT = 120; // # of days to keep lines in the report
+var INDIVIDUAL_ACC_CHECKS = true // Perform checks for drop in individual accounts
+var MCC_ACC_CHECKS = true // Perform checks for drop at the MCC Level
+
+
+
+function openDestination(fileName, headers) {
+  // Opens specified file for update
+  if (typeof fileName == 'string'){
+    var files = DriveApp.getFilesByName(fileName);
+    var sheetLongName = "organic paid";
+    if (!files.hasNext()) {
+      var spreadsheet = SpreadsheetApp.create(fileName);
+      spreadsheet.getSheets()[0].setName(sheetLongName);
+    } else {
+      var spreadsheet = SpreadsheetApp.open(files.next())
+    };
+    var sheetHeader = headers;
+    var sheet = spreadsheet.getSheetByName(sheetLongName);
+    if (!sheet) sheet = spreadsheet.insertSheet(sheetLongName);
+    if (sheet.getLastRow() == 0) {
+      sheet.appendRow(sheetHeader);
+    };
+    return sheet;
+  }
+}
+
+function main() {
+  var mccName = AdWordsApp.currentAccount().getName();
+  var accountSelector = MccApp.accounts()
+  .get();
+  mccTotal = []
+  while (accountSelector.hasNext()) {
+   // Iterate over accounts
+   var account = accountSelector.next();
+
+   // Select the child account.
+   MccApp.select(account);
+   // Run the report
+   mccTotal.push(buildReport(account, mccName));
+   if(MCC_ACC_CHECKS) {
+     Logger.log(mccTotal)
+   }
+
+ }
+}
+
+function buildReport(currentAccount, mccName) {
+
+  var formattedDate = function (mydate) {
+    var tz = AdWordsApp.currentAccount().getTimeZone()
+    return Utilities.formatDate(mydate, tz, "YYYYMMdd")
+  };
+
+  var paramsList = [
+    'SearchQuery',
+    'AccountDescriptiveName',
+    'AverageCpc',
+    'AveragePosition',
+    'Clicks',
+    'CombinedAdsOrganicClicks',
+    'CombinedAdsOrganicClicksPerQuery',
+    'CombinedAdsOrganicQueries',
+    'Ctr',
+    'Impressions',
+    'OrganicAveragePosition',
+    'OrganicClicks',
+    'OrganicClicksPerQuery',
+    'OrganicImpressions',
+    'OrganicImpressionsPerQuery',
+    'OrganicQueries'
+  ]
+
+  var account = currentAccount;
+  var accName = account.getName();
+  Logger.log(accName);
+
+  // Helper variables for sheet review
+  var today = new Date();
+  var dateNow = 'on ' + today.toLocaleDateString();
+
+  // Helper variables for previous 7 days report
+  var endDateLastWeek = new Date();
+  endDateLastWeek.setDate(endDateLastWeek.getDate()-8);
+  var startDateLastWeek = new Date();
+  startDateLastWeek.setDate(startDateLastWeek.getDate()-14);
+
+  // Helper for sheet edits
+  var daysDiff = function(date1, date2) {
+    var timeDiff = Math.abs(date2.getTime() - date1.getTime());
+    return Math.ceil(timeDiff / (1000 * 3600 * 24));
+  };
+
+  // Helper Report aggregator
+  function sumByCampaign(keys,report, feild) {
+    var storage = {}
+    var rows = report.rows()
+    if (!rows.hasNext()) Logger.log('bad report!')
+    while (rows.hasNext()) {
+      var row = rows.next()
+      // looping through the keys
+      keys.map(function(key) {
+        if (!storage[row[feild]]) {
+          storage[row[feild]] = {}
+        }
+        if (!storage[row[feild]][key]) {
+          storage[row[feild]][key] = Number(row[key])
+        } else {
+          storage[row[feild]][key] += Number(row[key])
+        }
+      });
+    }
+    return storage
+  }
+
+  var reportRows = [];
+  // Query the Report Service. Checked for existing campaigns in the account
+  if (AdWordsApp.campaigns().get().hasNext()) {
+
+    var request = 'SELECT ' + paramsList.join(', ') + ' from PAID_ORGANIC_QUERY_REPORT WHERE CombinedAdsOrganicQueries > '
+    + FILTER_VALUE + ' during LAST_WEEK'; //  YESTERDAY, where CampaignStatus = ENABLED
+
+    var report = AdWordsApp.report(request);
+    if (report.rows().hasNext()) { // Iterate over report rows to populate array of results
+      var rowIterator = report.rows();
+      while (rowIterator.hasNext()) {
+        var row = rowIterator.next();
+        var myRow = paramsList.map(function(p) {
+          return row[p];
+        })
+        myRow.unshift(today.toLocaleDateString());
+        // calculating the cost
+        var cost = (row['AverageCpc'] > 0 && row['Clicks'] > 0) ? row['AverageCpc'] * row['Clicks'] : 0;
+        myRow.push(cost);
+        reportRows.push(myRow);
+      } // loop over rows
+
+      var headers = paramsList.map(function (p) { // Get the display names for parameters
+        return report.getColumnHeader(p).getBulkUploadColumnName();
+      });
+      headers.push("Calculated Cost");
+
+      var trackingSheet = openDestination('organic paid combo ' + mccName, ['Report Date'].concat(headers));
+
+      // Looking for outdated Rows
+      var allRecords = (trackingSheet.getLastRow() > 2) ? trackingSheet.getRange(2,1, trackingSheet.getLastRow()-1).getValues() : [];
+      var outdated = allRecords.reduce(function(trash, row, ind) {
+        if (daysDiff(row[0], today) > TIME_LIMIT) trash.push(ind + 2);
+        return trash
+      }, []);
+
+      //Removing the outdated rows
+      outdated.map(function(pos, ind) {
+        trackingSheet.deleteRow(pos - ind)
+      })
+      // appending new results
+      reportRows.forEach(function(row) {
+        trackingSheet.appendRow(row);
+      });
+      // Aggregate campaign data for report
+      var results = sumByCampaign(['CombinedAdsOrganicClicks',
+                                   'CombinedAdsOrganicQueries'], report, 'SearchQuery');
+      var campaigns = Object.keys(results)
+      var totalCombinedAdsOrganicClicks = campaigns.reduce(function (acc, el) {
+        return acc + results[el]['CombinedAdsOrganicClicks']
+      }, 0)
+      var totalCombinedAdsOrganicQueries = campaigns.reduce(function (acc, el) {
+        return acc + results[el]['CombinedAdsOrganicQueries']
+      }, 0)
+      var totalCTR = totalCombinedAdsOrganicClicks / totalCombinedAdsOrganicQueries;
+
+      // Query for the previous 7 days and processing the report:
+      var request7Days = 'SELECT ' + paramsList.join(', ') + ' from PAID_ORGANIC_QUERY_REPORT WHERE CombinedAdsOrganicQueries > '
+      + FILTER_VALUE + ' during ' + formattedDate(startDateLastWeek) + ', ' + formattedDate(endDateLastWeek);
+
+      var report7Days = AdWordsApp.report(request7Days);
+      var resultsLastWeek = sumByCampaign(['CombinedAdsOrganicClicks',
+                                           'CombinedAdsOrganicQueries'], report7Days, 'SearchQuery');
+      var campaignsLastWeek = Object.keys(resultsLastWeek)
+      var lastWeekCombinedAdsOrganicClicks = campaignsLastWeek.reduce(function (acc, el) {
+        return acc + resultsLastWeek[el]['CombinedAdsOrganicClicks']
+      }, 0)
+      var lastWeekCombinedAdsOrganicQueries = campaignsLastWeek.reduce(function (acc, el) {
+        return acc + resultsLastWeek[el]['CombinedAdsOrganicQueries']
+      }, 0)
+      var lastweekCTR = lastWeekCombinedAdsOrganicClicks / lastWeekCombinedAdsOrganicQueries
+      var change = totalCTR / lastweekCTR - 1
+      var totals = ['Total ' + FILTER_VALUE + ' comb. Queries @' + accName,
+                    totalCombinedAdsOrganicClicks,
+                    totalCombinedAdsOrganicQueries,
+                    totalCombinedAdsOrganicClicks / totalCombinedAdsOrganicQueries,
+                    lastWeekCombinedAdsOrganicClicks,
+                    lastWeekCombinedAdsOrganicQueries,
+                    lastWeekCombinedAdsOrganicClicks / lastWeekCombinedAdsOrganicQueries
+                   ]
+      if (change < BENCHMARK && INDIVIDUAL_ACC_CHECKS) {
+        var allCampaigns = campaigns.concat(campaignsLastWeek)
+        allCampaigns = allCampaigns.reduce(function (acc, el) {
+          if (acc.indexOf(el) == -1) acc.push(el)
+          return acc
+        }, [])
+        var header = ['Campaign', 'last 7 days comb. Clicks', 'last 7 days comb. Queries', 'last 7 days CTR',
+                      'previous 7 days comb. Clicks', 'previous 7 days comb. Queries', 'previous 7 days CTR']
+        export = allCampaigns.reduce(function(rows, campaign) {
+          var row = [
+            campaign,
+            results[campaign] ? results[campaign]['CombinedAdsOrganicClicks'] : 0,
+            results[campaign] ? results[campaign]['CombinedAdsOrganicQueries'] : 'less than ' + FILTER_VALUE,
+            results[campaign] ? results[campaign]['CombinedAdsOrganicClicks'] / results[campaign]['CombinedAdsOrganicQueries'] : '',
+            resultsLastWeek[campaign] ? resultsLastWeek[campaign]['CombinedAdsOrganicClicks'] : 0,
+            resultsLastWeek[campaign] ? resultsLastWeek[campaign]['CombinedAdsOrganicQueries'] : 'less than ' + FILTER_VALUE,
+            resultsLastWeek[campaign] ? resultsLastWeek[campaign]['CombinedAdsOrganicClicks'] / resultsLastWeek[campaign]['CombinedAdsOrganicQueries'] : '' ]
+          rows.push(row)
+          return rows
+        },[header, totals])
+
+        var spreadsheet = SpreadsheetApp.create("Combined queries alert output " + accName);
+        var sheet = spreadsheet.getActiveSheet()
+        var range = sheet.getRange(1, 1, export.length, export[0].length)
+        range.setValues(export)
+        var message = 'change in CTR is under the benchmark'
+        Logger.log('change in CTR is under the benchmark, check mail')
+        message += 'Report available at ' + spreadsheet.getUrl();
+        MailApp.sendEmail(RECIPIENTS.join(),
+                          "ALERT clicks / queries drop",
+                          message);
+      } else if(change < BENCHMARK) {
+        Logger.log('change in CTR is under the benchmark, check mail')
+      }
+      else {
+        Logger.log('change in CTR is over the benchmark')
+      }
+
+      if (trackingSheet) {
+        Logger.log('Report was updated')
+        Logger.log(trackingSheet.getParent().getUrl());
+      }
+    } // end report check
+  } // end campaigns check
+
+  return totals
+} // end of build Report function
