@@ -1,0 +1,789 @@
+//Make a copy of given URL https://goo.gl/aKQ6AJ
+var REPORT_URL = 'https://docs.google.com/spreadsheets/d/11CiMX-t3bDYFQoyCniVbkH6vjxVDCCIJVDEwVWd29F0/edit#gid=0'
+
+
+// DATE HELPERS
+function userDate() {
+  var today = new Date()
+  return {
+    monthDay: Utilities.formatDate(today, AdWordsApp.currentAccount().getTimeZone(), 'd'),
+    weekDay: Utilities.formatDate(today, AdWordsApp.currentAccount().getTimeZone(), 'u'),
+    year:Utilities.formatDate(today, AdWordsApp.currentAccount().getTimeZone(), 'YYYY'),
+    month: Utilities.formatDate(today, AdWordsApp.currentAccount().getTimeZone(), 'M')
+  }
+}
+
+function getDateDaysAgo(days, report) {
+  var plainDate = userDate()
+  var thePast = new Date(plainDate.year, plainDate.month - 1, 1);
+  thePast.setDate(plainDate.monthDay - days)
+  var month = (thePast.getMonth() + 1 < 10) ? '0' + (thePast.getMonth() + 1) : (thePast.getMonth() + 1)
+  var day = (thePast.getDate() < 10) ? '0' + (thePast.getDate()) : (thePast.getDate())
+  return (report) ? thePast.getFullYear().toString().concat(month,day) : [thePast.getFullYear(),month,day].join('-')// yyyyMMdd
+}
+
+function getLastWeekStart(report) {
+  var weeks = {}
+  for (var i=1; i<= PERIODS + 1; i++) {
+  var plainDate = userDate()
+  var thePast = new Date(plainDate.year, plainDate.month - 1, 1);
+  thePast.setDate(plainDate.monthDay - plainDate.weekDay - 7*i + 1)
+  var month = (thePast.getMonth() + 1 < 10) ? '0' + (thePast.getMonth() + 1) : (thePast.getMonth() + 1)
+  var day = (thePast.getDate() < 10) ? '0' + (thePast.getDate()) : (thePast.getDate())
+  weeks[i] = (report) ? thePast.getFullYear().toString().concat(month,day) : [thePast.getFullYear(),month,day].join('-')
+  }
+  return weeks
+}
+
+function getLastWeekEnd(report) {
+  var plainDate = userDate()
+  var thePast = new Date(plainDate.year, plainDate.month - 1, 1);
+  thePast.setDate(plainDate.monthDay - plainDate.weekDay)
+  var month = (thePast.getMonth() + 1 < 10) ? '0' + (thePast.getMonth() + 1) : (thePast.getMonth() + 1)
+  var day = (thePast.getDate() < 10) ? '0' + (thePast.getDate()) : (thePast.getDate())
+  return (report) ? thePast.getFullYear().toString().concat(month,day) : [thePast.getFullYear(),month,day].join('-')
+}
+
+function getReportRanges() {
+  var plainDate = userDate()     
+  var MonthLiteral = (DATE_LITERAL == 'Month') ? 1 : 0
+  var WeekLiteral = (DATE_LITERAL == 'Week'||DATE_LITERAL == 'Weekday') ? 1 : 0
+  var thePast = new Date(plainDate.year, plainDate.month - 1*WeekLiteral - PERIODS*MonthLiteral, 1*WeekLiteral);
+  thePast.setDate((plainDate.monthDay - plainDate.weekDay-(PERIODS)*7+1) * WeekLiteral + 1*MonthLiteral)
+  var month = (thePast.getMonth() + 1 < 10) ? '0' + (thePast.getMonth() + 1) : (thePast.getMonth() + 1)
+  var day = (thePast.getDate() < 10) ? '0' + (thePast.getDate()) : (thePast.getDate())
+  var startDay= thePast.getFullYear().toString().concat(month,day)// yyyyMMdd
+  return startDay + ',' + getLastPeriodEnd(true)
+}
+
+function getLastPeriodEnd(report) {
+  var plainDate = userDate()     
+  var MonthLiteral = (DATE_LITERAL == 'Month') ? 1 : 0
+  var WeekLiteral = (DATE_LITERAL == 'Week'||DATE_LITERAL == 'Weekday') ? 1 : 0
+  var thePast = new Date(plainDate.year, plainDate.month - 1*WeekLiteral, 1*WeekLiteral);
+  thePast.setDate((plainDate.monthDay - plainDate.weekDay) * WeekLiteral)
+  var month = (thePast.getMonth() + 1 < 10) ? '0' + (thePast.getMonth() + 1) : (thePast.getMonth() + 1)
+  var day = (thePast.getDate() < 10) ? '0' + (thePast.getDate()) : (thePast.getDate())
+  return (report) ? thePast.getFullYear().toString().concat(month,day) : [thePast.getFullYear(),month,day].join('-')
+}
+
+function getPeridos(report) {
+  var plainDate = userDate()     
+  var MonthLiteral = (DATE_LITERAL == 'Month') ? 1 : 0
+  var WeekLiteral = (DATE_LITERAL == 'Week'||DATE_LITERAL == 'Weekday') ? 1 : 0
+  var periods = {}
+  for (var j = 1; j <= PERIODS; j++) {
+  var thePast = new Date(plainDate.year, plainDate.month - 1*WeekLiteral - j*MonthLiteral, 1*WeekLiteral);
+  thePast.setDate((plainDate.monthDay - plainDate.weekDay-(j)*7+1) * WeekLiteral + 1*MonthLiteral)
+  var month = (thePast.getMonth() + 1 < 10) ? '0' + (thePast.getMonth() + 1) : (thePast.getMonth() + 1)
+  var day = (thePast.getDate() < 10) ? '0' + (thePast.getDate()) : (thePast.getDate())
+  var startDay= (report) ?thePast.getFullYear().toString().concat(month,day): [thePast.getFullYear(),month,day].join('-')
+  periods[startDay] = j.toFixed(0)
+  }
+  return periods
+}
+
+// MISC HELPERS
+function endedStatus(campaign, userDate) {
+  var status = 'IN PROGRESS'
+  var endDate = campaign.getEndDate()
+  if (!endDate) {
+    return status
+  } else {
+    if (!userDate) {
+      var now = new Date()
+      var timeZone = AdWordsApp.currentAccount().getTimeZone();
+      var year = Utilities.formatDate(now, timeZone, 'yyyy')
+      var month = Utilities.formatDate(now, timeZone, 'MM')
+      var day = Utilities.formatDate(now, timeZone, 'dd')
+      } else {
+        var year = userDate.year
+        var month = userDate.month
+        var day = userDate.monthDay
+        }
+    if (endDate.year < year) {
+      status = 'ENDED'
+    } else if (endDate.year == year && endDate.month < month) {
+      status = 'ENDED'
+    } else if (endDate.year == year && endDate.month == month && endDate.day < (day)) {
+      status = 'ENDED'
+    }
+    return status
+  }
+}
+
+function getEndedOrPausedAdGroupsCampaigns() {
+  var userDateNow = userDate()
+  Logger.log(getReportRanges())
+  var allCampaigns = AdWordsApp.campaigns()
+  .withCondition("Status = ENABLED")
+  .forDateRange(getReportRanges())
+  .get()
+  var ids = []
+  while (allCampaigns.hasNext()) {
+    var campaign = allCampaigns.next()
+    
+    if (endedStatus(campaign, userDateNow)=='ENDED') {
+      //      Logger.log('%s is Ended', campaign.getName())
+      ids.push(campaign.getId())
+    }
+  }
+  var adGroups = AdWordsApp.adGroups()
+  .withCondition("CampaignStatus = ENABLED")
+  .forDateRange(getReportRanges())
+  .get()
+  var allPausedGroups = {}
+  while (adGroups.hasNext()) {
+    var adGroup = adGroups.next()
+    var campaignId = adGroup.getCampaign().getId().toString()
+    if (typeof allPausedGroups[campaignId] == 'undefined') allPausedGroups[campaignId] = true
+    if (!adGroup.isRemoved()) {
+      allPausedGroups[campaignId] = allPausedGroups[campaignId] && adGroup.isPaused()
+    }
+  }
+  var allPaused =[]
+  var allCampaignsIds =  Object.keys(allPausedGroups)
+  for (var i in allCampaignsIds) {
+    var id = allCampaignsIds[i]
+    if (allPausedGroups[id]) allPaused.push(id)
+  }
+  return ids.concat(allPaused)
+}
+
+var Results = function () {
+//  this.keys = []
+}
+
+Results.prototype.create = function (id, period, metrics) {
+  this[id] = {}
+  this[id][period] = {}
+  for (var key in metrics) {
+    this[id][period][metrics[key]] = 0
+  }
+}
+
+Results.prototype.set = function (id, period, metrics) {
+  if (!this[id]) {
+    this.create(id, period, metrics)
+  } else {
+    if (!this[id][period]) this[id][period] = {}
+    for (var key in metrics) {
+      this[id][period][metrics[key]] = 0
+    }
+  }
+}
+
+function convertMetrics(header) {
+  return header.reduce(function(metrics, metric) {
+    var converted = metric
+    if (metric == 'Impression share') converted = 'SearchImpressionsShare'
+    if (metric == 'Average Position') converted = 'AveragePosition'
+    if (metric == 'Customer ID') converted = 'ExternalCustomerId'
+    if (metric == 'Campaign') converted = 'CampaignName'
+    if (metric == 'Ad Group') converted = 'AdGroupName'//Ad Group
+    if (metric == 'CTR') converted = 'Ctr'
+    if (metric == 'Average Position') converted = 'AveragePosition'
+    metrics.push(converted)
+    return metrics
+  }, [])
+}
+
+function convertHeader(metrics) {
+  return metrics.reduce(function(header, metric) {
+    var converted = metric
+    if (metric == 'SearchImpressionsShare') converted =  'Impression share'
+    if (metric == 'ExternalCustomerId') converted =  'Customer ID'
+    if (metric == 'CampaignName') converted =  'Campaign'
+    if (metric == 'AdGroupName') converted =  'Ad Group'//Ad Group
+    if (metric == 'Ctr') converted =  'CTR'
+    if (metric == 'AveragePosition') converted =  'Average Position'
+    header.push(converted)
+    return header
+  }, [])
+}
+
+Results.prototype.dataRow = function (metrics, placeholder, period) {
+  var self = this
+  var na = placeholder || '--'
+  var print = function (id) {
+    var results = []
+    var periods = (period) ? [period] : Object.keys(self[id]).filter(function (key) {return key.match('period')})
+    for (var j in periods) {
+      var result = []
+      var converted = convertMetrics(metrics)
+      for (var i in converted) {
+        var metric = converted[i]
+        if (converted[i] == 'Anomaly') {
+          try {
+          if (self[id].declining.flag || self[id].historical.flag ) {
+            result.push(['declining' ].concat((self[id].declining.metrics||['-']),
+                                              [' historical'], (self[id].historical.metrics||['-'])).join())
+          } else {
+            result.push('tbd')
+          }
+          } catch (e) {
+            Logger.log(id)
+            Logger.log(self[id])
+            throw Error(e)
+          }
+        } else {
+          
+          try {
+            if (typeof self[id][periods[j]][metric] != 'undefined' && self[id][periods[j]][metric] != null ) {
+              result.push(self[id][periods[j]][metric])
+            } else {
+              result.push(na)
+            }
+          } catch (e) {
+            Logger.log(self[id])
+            throw Error(e)
+          }
+        }
+      }
+      results.push(result)
+    }
+    return results
+  }
+  return print
+}
+
+Results.prototype.loader = function (metrics) {
+  var self = this
+  var load = function (id, row) {
+    if (!self[id]) self.set(id, row.Period, metrics)
+    if (!self[id][row.Period]) self.set(id, row.Period, metrics)
+    for (var key in metrics) {
+      self[id][row.Period][metrics[key]] = row[metrics[key]].replace(/\,/g, '')
+    }
+  }
+  return load
+}
+
+Results.prototype.additiveLoader = function (metrics) {
+  var self = this
+  var load = function (id, row) {
+    if (!self[id]) self.set(id, row.Period, metrics)
+    if (!self[id][row.Period]) self[id][row.Period] = {}
+    for (var key in metrics) {
+      if (!self[id][row.Period][metrics[key]]) self[id][row.Period][metrics[key]] = 0
+      self[id][row.Period][metrics[key]] += parseFloat(row[metrics[key]].replace(/\,/g, ''))
+    }
+  }
+  return load
+}
+
+Results.prototype.weigthedLoader = function (valueKey, weightKey) {
+  var self = this
+  var load = function (id, row) {
+    if (!self[id] || !self[id][row.Period]) {
+      self.set(id, row.Period, [valueKey, weightKey,valueKey+'Weighted '+weightKey])
+    }
+    var metrics = [valueKey, weightKey, (valueKey+'Weighted '+weightKey)]
+    metrics.map(function(metricKey) {
+      if (!self[id][row.Period][metricKey]) self[id][row.Period][metricKey] = 0
+    })
+    var value = parseFloat(row[valueKey])
+    if (!isNaN(value)) {
+      self[id][row.Period][valueKey+'Weighted '+weightKey] += value*parseFloat(row[weightKey])
+      self[id][row.Period][valueKey] = value
+    } else {
+      self[id][row.Period][valueKey] = row[valueKey]
+    }
+    self[id][row.Period][weightKey] += parseFloat(row[weightKey])
+  }
+  return load
+}
+
+Results.prototype.weigthKeys = function (valueKey, weightKey) {
+  var ids = Object.keys(this)
+  for (var i in ids) {
+    var resultGroup = this[ids[i]]
+    var periods = Object.keys(resultGroup).filter(function (key) {return key.match('period')})
+    for (var j in periods) {
+      var result = resultGroup[periods[j]]
+      if (result[valueKey+'Weighted '+weightKey] && result[weightKey]) {
+        result['Weighted '+valueKey] = result[valueKey+'Weighted '+weightKey] / result[weightKey]
+      } else {
+        result['Weighted '+valueKey] = 0
+      }
+    }
+  }
+}
+
+Results.prototype.each = function (parameterFunction) {
+  var ids = Object.keys(this)
+  for (var i in ids) {
+    parameterFunction(this[ids[i]])
+  }
+}
+
+Results.prototype.filterById = function (idFilterFunction, parameterFunction) {
+  var ids = Object.keys(this)
+  for (var i in ids) {
+    if (idFilterFunction(ids[i])) {
+      parameterFunction(this[ids[i]])
+    }
+  }
+}
+
+Results.prototype.head = function (n) {
+  var ids = Object.keys(this)
+  for (var k = 0; k < n; k++) {
+    Logger.log('at %s: object: %s', ids[k], this[ids[k]])
+  }
+}
+
+Results.prototype.isDeclining = function (id) {
+  return this[id].declining.flag
+}
+Results.prototype.isHistorical = function (id) {
+  return this[id].historical.flag
+}
+
+function getKeywordsReport(results) {
+  var theDate = getReportRanges();
+  var dateParameter = (DATE_LITERAL == 'Month') ? 'Month' : 'Week'
+  var skipIds = getEndedOrPausedAdGroupsCampaigns()
+  if (skipIds.length) {
+    skipIds = 'and CampaignId NOT_IN [' + skipIds.join(',') + ']'
+  } else {
+    skipIds = ''
+  }
+  Logger.log('Using date range %s for Kerword Report',theDate);
+  var OPTIONS = { includeZeroImpressions : true };
+  var metrics = ['Impressions','QualityScore', 'CreativeQualityScore']
+  var parameters = ['Criteria', 'Id', 'AdGroupName','ExternalCustomerId',
+  'CampaignId','CampaignName', 'AdGroupId','AdGroupName', dateParameter,
+  'Id','Criteria','IsNegative']
+  var report = 'KEYWORDS_PERFORMANCE_REPORT';
+  var query = ['select',parameters.join(','),',',metrics.join(','),'from',report,
+  'where AdNetworkType1 = SEARCH',
+  skipIds, // check for non empty ended campaigns!!!!
+  'and CampaignStatus = ENABLED',
+  'and AdGroupStatus = ENABLED',
+  'and Status = ENABLED',
+  'during',theDate].join(' ');
+  Logger.log(query)
+  var report =  AdWordsApp.report(query, OPTIONS)
+  var reportIter = report.rows();
+  var loadWeightedQS = results.weigthedLoader('QualityScore', 'Impressions')
+  var lastWeeks = PERIODS_DATES
+  while(reportIter.hasNext()) {
+    var row = reportIter.next();
+    row.Period = 'period' + lastWeeks[row[dateParameter]]
+    if(row.IsNegative == true || row.IsNegative === 'true') { continue; }
+    row.entityType = 'Campaigns'
+    loadWeightedQS('Campaign:'+row.CampaignId,row);
+    row.entityType = 'AdGroups'
+    loadWeightedQS('AdGroup:'+[row.CampaignId,row.AdGroupId].join('-'),row);
+  }
+  results.weigthKeys('QualityScore', 'Impressions')
+}
+
+function getAdGroupReport(results) {
+  var theDate = getReportRanges();
+  var dateParameter = (DATE_LITERAL == 'Month') ? 'Month' : 'Week'
+  Logger.log('Using date range %s for Ad Groups Report',theDate);
+  var skipIds = getEndedOrPausedAdGroupsCampaigns()
+  if (skipIds.length) {
+    skipIds = 'and CampaignId NOT_IN [' + skipIds.join(',') + ']'
+  } else {
+    skipIds = ''
+  }
+  var OPTIONS = { includeZeroImpressions : true };
+  var metrics = ['Clicks','Conversions', 'Cost', 'Impressions', 'Ctr', 'AveragePosition', 'SearchImpressionShare', dateParameter]
+  var parameters = ['ExternalCustomerId',
+                    'CampaignId','CampaignName', 'AdGroupId','AdGroupName', 'AdGroupType']
+  var report = 'ADGROUP_PERFORMANCE_REPORT';
+  var query = ['select',parameters.join(','),',',metrics.join(','),'from',report,
+               'where CampaignStatus = ENABLED',
+               skipIds,
+               'and AdGroupStatus = ENABLED',
+               'during',getReportRanges()].join(' ');
+  var report =  AdWordsApp.report(query, OPTIONS)
+  var reportIter = report.rows();
+  var loadAdGroupAttributes = results.loader(['ExternalCustomerId','CampaignId','CampaignName', 'Impressions', 'AdGroupId','AdGroupName',
+                                              'entityType', dateParameter, 'Period',
+                                              'Ctr'])
+  var loadBacisPerformace = results.additiveLoader(['Clicks','Conversions', 'Impressions', 'Cost'])
+  var LoadSearchPerformance = results.additiveLoader(['Estimated Queries', 'AveragePosition', 'SearchImpressionShare'])
+  var lastWeeks = PERIODS_DATES
+  while(reportIter.hasNext()) {
+    var row = reportIter.next();
+    row.Period = 'period' + lastWeeks[row[dateParameter]]
+    row.Ctr = parseFloat(row.Ctr) / 100
+    row['Estimated Queries'] = (row.Impressions !=0 && !isNaN(parseFloat(row.SearchImpressionShare))) ?
+      (row.Impressions/(parseFloat(row.SearchImpressionShare)/100)) : 0
+      try {
+        row.entityType = 'AdGroups'
+        loadBacisPerformace('AdGroup:'+[row.CampaignId,row.AdGroupId].join('-'),row)
+        loadAdGroupAttributes('AdGroup:'+[row.CampaignId,row.AdGroupId].join('-'),row)
+        if (row.AdGroupType == 'SEARCH_STANDARD' || 'SEARCH_DYNAMIC_ADS') LoadSearchPerformance('AdGroup:'+[row.CampaignId,row.AdGroupId].join('-'),row)
+        row.entityType = 'Account'
+        loadBacisPerformace('Account:'+row.ExternalCustomerId,row);
+        row.entityType = 'Campaigns'
+        loadBacisPerformace('Campaign:'+row.CampaignId,row);
+      } catch (e) {
+        Logger.log(row)
+        throw Error(e)
+      }
+  }
+}
+
+function getCampaignReport(results) {
+  var theDate = getReportRanges();
+  var dateParameter = (DATE_LITERAL == 'Month') ? 'Month' : 'Week'
+  Logger.log('Using date range %s for Campaigns Report',theDate);
+  var OPTIONS = { includeZeroImpressions : true };
+  var skipIds = getEndedOrPausedAdGroupsCampaigns()
+  if (skipIds.length) {
+    skipIds = 'and CampaignId NOT_IN [' + skipIds.join(',') + ']'
+  } else {
+    skipIds = ''
+  }
+  var metrics = ['Ctr', 'AveragePosition', 'SearchImpressionShare', 'Impressions', dateParameter]
+  var parameters = ['ExternalCustomerId',
+                    'CampaignId','CampaignName','AdvertisingChannelType']
+  var report = 'CAMPAIGN_PERFORMANCE_REPORT';
+  var query = ['select',parameters.join(','),',',metrics.join(','),'from',report,
+               'where CampaignStatus = ENABLED',
+               skipIds,
+               'during',getReportRanges()].join(' ');
+  var report =  AdWordsApp.report(query, OPTIONS)
+  var reportIter = report.rows();
+  var loadAttributes = results.loader(['ExternalCustomerId',
+                                       'CampaignId','CampaignName', 'SearchImpressionShare', 'Estimated Queries', 'entityType',
+                                       dateParameter, 'Period', 'Impressions', 'Ctr'])
+  var loadAccountAttributes = results.loader(['ExternalCustomerId','entityType', dateParameter, 'Period'])
+  var LoadSearchPerformance = results.additiveLoader(['SearchImpressionShare','AveragePosition', 'Estimated Queries'])
+  var lastWeeks = PERIODS_DATES
+  while(reportIter.hasNext()) {
+    var row = reportIter.next();
+    row.Period = 'period' + lastWeeks[row[dateParameter]]
+    row.Ctr = parseFloat(row.Ctr) / 100
+    row.AveragePosition = parseFloat(row.AveragePosition)
+    row['Estimated Queries'] = (row.Impressions !=0 && !isNaN(parseFloat(row.SearchImpressionShare))) ?
+      (row.Impressions/(parseFloat(row.SearchImpressionShare)/100)) : 0
+    row.SearchImpressionShare = parseFloat(row.SearchImpressionShare)/100
+      try {
+        row.entityType = 'Campaigns'
+        loadAttributes('Campaign:'+row.CampaignId,row);
+        if (row.AdvertisingChannelType == 'Search') {
+          LoadSearchPerformance('Campaign:'+row.CampaignId,row);
+        }
+        row.entityType = 'Account'
+        loadAccountAttributes('Account:'+row.ExternalCustomerId,row);
+      } catch (e) {
+        Logger.log(row)
+        throw Error(e)
+      }
+  }
+}
+
+// SHEET RELATED FUNCTIONS
+var reportSpreadsheet = null
+var PERIODS_DATES = null
+var PERIODS = null
+
+function sheetPrefix(sheetName) {
+  return {
+    'AdGroups': 'AG_',
+    'Campaigns': 'CM_',
+    'Account': 'AC_'
+  }[sheetName]
+}
+
+function getReportConfig() {
+  var period = reportSpreadsheet.getRangeByName('Date_Period').getValues()[0][0]
+  var lookback = reportSpreadsheet.getRangeByName('Periods').getValues()[0][0]
+  Logger.log('sheet data %s, %s', period, lookback)
+  var lookback = lookback.match(/\d+/)[0]
+  return {
+    'period':period,
+    'lookback':lookback
+  }
+}
+
+
+function getHeaders(reportTab) {
+  var prefix = sheetPrefix(reportTab)
+  return {
+    'parameterRange': reportSpreadsheet.getRangeByName(prefix + 'Attributes'),
+    'metricRange': reportSpreadsheet.getRangeByName(prefix + 'Header_Metrics')
+  }
+}
+
+function clearReport(reportTab) {
+  var ss=reportSpreadsheet // reportSpreadsheet
+  var prefix = sheetPrefix(reportTab)
+  var hh = {
+    'parameterRange': ss.getRangeByName(prefix + 'Attributes'),
+    'metricRange': ss.getRangeByName(prefix + 'Header_Metrics')
+  }
+  var reportSheet = hh.parameterRange.getSheet()
+  var list = getConditionMetrics(reportTab)
+  var list = list.concat(list, list, list)
+  reportSheet.getRange(hh.metricRange.getRow(), hh.metricRange.getColumn(),
+                       1, list.length).setValues([list])
+  
+  if (reportSheet.getLastRow() > hh.parameterRange.getRow()) {
+    reportSheet.getRange(hh.parameterRange.getRow() + 1, 1,
+                         reportSheet.getLastRow() - hh.parameterRange.getRow(), reportSheet.getLastColumn())
+    .clear()
+  }
+}
+
+function getConditionMetrics(reportTab) {
+  var res =  reportSpreadsheet.getNamedRanges().filter(function (range) {
+    return range.getName().match(sheetPrefix(reportTab) + 'Conditions_Metrics')
+  })
+  return res[0].getRange().getValues().reduce(function (list,metricRow) {
+    list.push(metricRow[0].match(/(.*)(\stoo.*)/)[1])
+    return list
+  }, [])
+}
+
+function getConditions(reportTab, type) {
+  var res =  reportSpreadsheet.getNamedRanges().filter(function (range) {
+    return range.getName().match(sheetPrefix(reportTab) + type)
+  })
+  return res[0].getRange().getValues().reduce(function (list,conditionRow) {
+    list.push(conditionRow[0])
+    return list
+  }, [])
+}
+
+function resetReport(reportTab) {
+  var headers = getHeaders(reportTab)
+  
+}
+
+function getConditionsChecker(reportTab) {
+  var checker = {
+    'historical' : null,
+    'declining' : null
+  }
+  var metrics = getConditionMetrics(reportTab);
+  var historicalConditions = getConditions(reportTab, 'Historical_Conditions')
+  var absoluteConditions = getConditions(reportTab, 'Absolute_Conditions')
+  var decliningConditions = getConditions(reportTab, 'Declining_Conditions')
+
+  var historicalCheck = function (result, metric) {
+    var check = false
+    var index = metrics.indexOf(metric)
+    var tooLow = (metric != 'Cost') ? function (a,b) {return a < b} : function (a,b) {return a > b}
+    if (historicalConditions[index]) check = tooLow(result.period1[metric], result.average[metric] * historicalConditions[index])
+    if (absoluteConditions[index]) check = check && result.period1[metric] > absoluteConditions[index]
+    return check
+  }
+
+  var decliningCheck = function (result, metric) {
+    var check = false
+    var index = metrics.indexOf(metric)
+    if (decliningConditions[index] == 'Yes') {
+      var p1 = parseFloat(result.period1[metric])
+      var p2 = parseFloat(result.period2[metric])
+      var p3 = parseFloat(result.period3[metric])
+      if (!isNaN(p1) && !isNaN(p2) && !isNaN(p3))
+      check = (p1 < p2 && p2 < p3)
+    }
+    return check
+  }
+
+  checker.historical = historicalCheck
+  checker.declining = decliningCheck
+  return checker
+}
+
+function prepareReport(reportTab) {
+}
+
+function main() {
+
+  // Getting Config Data
+  reportSpreadsheet = SpreadsheetApp.openByUrl(REPORT_URL)
+  var dateConfig = getReportConfig()
+  PERIODS = dateConfig.lookback
+  DATE_LITERAL = dateConfig.period
+  PERIODS_DATES = getPeridos()
+  DATE_RANGE=getReportRanges()
+  var labels = []
+  for (var key in PERIODS_DATES) {
+    if (PERIODS_DATES[key] < 4) labels[PERIODS_DATES[key]] = key
+  }
+  reportSpreadsheet.getRangeByName('Control_Period').setValues([[DATE_LITERAL + ' starts at ' + labels[1]]])//PERIODS_DATES
+  reportSpreadsheet.getRangeByName('Minus1_Period').setValues([[DATE_LITERAL + ' starts at ' + labels[2]]])
+  reportSpreadsheet.getRangeByName('Minus2_Period').setValues([[DATE_LITERAL + ' starts at ' + labels[3]]])
+  var email = reportSpreadsheet.getRangeByName('Email').getValues()[0][0]
+  // Processing AdWords Reports
+  var results = new Results()
+  getKeywordsReport(results)
+  getAdGroupReport(results)
+  getCampaignReport(results)
+  
+  // Processing Conditions Check
+  var tabs = ['AdGroups', 'Campaigns', 'Account']  
+  var checks = {
+    'AdGroups':getConditionsChecker('AdGroups'),
+    'Campaigns':getConditionsChecker('Campaigns'),
+    'Account':getConditionsChecker('Account')
+  }
+  
+  var itemsIds = {
+    'AdGroups': Object.keys(results).filter(function(el) {return el.match('AdGroup')}),
+    'Campaigns': Object.keys(results).filter(function(el) {return el.match('Campaign')}),
+    'Account': Object.keys(results).filter(function(el) {return el.match('Account')})
+  }
+  
+  var allMetrics = {
+    'AdGroups': convertMetrics(getConditionMetrics('AdGroups')),
+    'Campaigns' :convertMetrics(getConditionMetrics('Campaigns')),
+    'Account' :convertMetrics(getConditionMetrics('Account'))
+  }
+  
+//  Preparing debug data
+  var debugSpreadsheet = SpreadsheetApp.create("Report debug output");
+  debugSpreadsheet.getActiveSheet().setName('ALL_ITEMS')
+  var debugAnomaliesArray = []
+  var debugRows = []
+  var debugAnomaliesFull = []
+  var testMetrics = convertMetrics(getConditionMetrics('AdGroups'))
+  var debugLiteral = (dateConfig.period != 'Month') ? 'Week' : 'Month'
+  var adGroupRow = results.dataRow(getHeaders('AdGroups').parameterRange.getValues()[0]
+                                   .concat(testMetrics,['Anomaly', debugLiteral, 'Period','entityType']), 'n/a')
+  var debugRow = results.dataRow(getHeaders('AdGroups').parameterRange.getValues()[0]
+                                   .concat(testMetrics,['Anomaly', debugLiteral, 'entityType']), 'n/a')
+  
+//  Updating resutls
+  results.each(function (result) {
+    if (result.period1.entityType != 'Keywords') {
+      
+      var tabMetrics = allMetrics[result.period1.entityType]
+          var periods = Object.keys(result).filter(function (key) {return key.match('period')})
+          for (var i in periods) {
+            //      calculating possible impressions
+            if (result[periods[i]]['Estimated Queries'] > 0 && result[periods[i]].Impressions > 0) {
+              result[periods[i]].SearchImpressionsShare = result[periods[i]].Impressions / result[periods[i]]['Estimated Queries']
+            }
+          }
+      result.average = {}
+      // calculating anlomaly  for entity metrics Set
+      result.historical = {
+        flag: false
+      } 
+      result.declining = {
+        flag: false
+      }
+      for (var j in tabMetrics) {
+        var metric = tabMetrics[j]
+        // calculating avergage
+        var avg = 0
+        for (var ind=2; ind <= PERIODS; ind++) {
+          avg += result['period' + ind][metric]
+        }
+        result.average[metric] =  avg / (PERIODS-1)
+        var historicalCheck =  checks[result.period1.entityType].historical(result, metric)
+        var decliningCheck =  checks[result.period1.entityType].declining(result, metric)
+        if (historicalCheck) {
+          result.historical.flag = true
+          result.historical.metrics = result.historical.metrics || []
+          result.historical.metrics.push(metric)
+        }
+        if (decliningCheck) {
+          result.declining.flag = true
+          result.declining.metrics = result.declining.metrics || []
+          result.declining.metrics.push(metric)
+        }
+        if (decliningCheck || historicalCheck) {
+          debugAnomaliesArray.push(result.period1.CampaignName + ">" + result.period1.AdGroupName + ">" + metric)
+        }
+      }
+    }
+  })
+  
+  Logger.log('found %s anomalous items', debugAnomaliesArray.length)
+  if (debugAnomaliesArray.length > 0) {
+    var emailMessage = 'There are ' + debugAnomaliesArray.length.toFixed(0) + 'anomalous items in your account\n' +
+      'Check the full report at ' + REPORT_URL
+  }
+  // Putting data to tabs 
+  for (var tabIndex in tabs) {
+    var reportTab = tabs[tabIndex]
+    var itemsSheet = reportSpreadsheet.getSheetByName(reportTab)
+    var anomalyItems = []
+    var anomalyItemsColors = []
+    var anomalyItemsFonts = []
+    var tabMetrics = allMetrics[reportTab]
+    var sheetHeaders = getHeaders(reportTab)
+    var header = sheetHeaders.parameterRange.getValues()[0].concat(tabMetrics)    
+    var itemRow = results.dataRow(header, 'n/a', 'period1')
+    var historicalRow = results.dataRow(tabMetrics, 'n/a', 'average')
+    var period2Row = results.dataRow(tabMetrics, 'n/a', 'period2')
+    var period3Row = results.dataRow(tabMetrics, 'n/a', 'period3')
+    var items = itemsIds[reportTab]
+    for (var i in items) {
+      var debug = adGroupRow(items[i]) 
+      debugRows = debugRows.concat(debug)
+      if (results.isDeclining(items[i]) || results.isHistorical(items[i])) {
+        var item = itemRow(items[i])
+        item = [item[0].concat(historicalRow(items[i])[0],
+                                  period2Row(items[i])[0],
+                                  period3Row(items[i])[0]
+                                 )]
+        anomalyItems = anomalyItems.concat(item) 
+        var debugItem = debugRow(items[i]) 
+        debugAnomaliesFull = debugAnomaliesFull.concat(debugItem) 
+        var declinedMetrics = convertHeader((results[items[i]].declining.metrics||[]))
+        var historicalMetrics = convertHeader((results[items[i]].historical.metrics||[]))
+        var colorsRow = header.reduce(function (arr, iten) {
+          var color = (declinedMetrics.indexOf(iten) != -1) ? 'yellow': ''
+          arr.push(color)
+          return arr
+        }, [])
+        var dummyArray = []
+        for (var l =0; l<tabMetrics.length*3; l++) {
+          dummyArray[l] = '-'}
+        colorsRow = colorsRow.concat(dummyArray)
+        var fontRow = header.reduce(function (arr, iten) {
+          var color = (historicalMetrics.indexOf(iten) != -1) ? 'red': ''
+          arr.push(color)
+          return arr
+        }, [])
+        fontRow = fontRow.concat(dummyArray)
+        anomalyItemsColors = anomalyItemsColors.concat([colorsRow])
+        anomalyItemsFonts = anomalyItemsFonts.concat([fontRow]) 
+      }
+    }
+    clearReport(reportTab)
+    if (anomalyItems.length > 0) {
+      var rowsStart = sheetHeaders.parameterRange.getRow() + 1
+      header = header.concat(tabMetrics, tabMetrics, tabMetrics)
+      itemsSheet.getRange(rowsStart, 1,
+                          anomalyItems.length,header.length)
+      .setValues(anomalyItems)
+      
+      itemsSheet.getRange(rowsStart, 1,
+                          anomalyItems.length,header.length)
+      .setBackgrounds(anomalyItemsColors)
+      
+      itemsSheet.getRange(rowsStart, 1,
+                          anomalyItems.length,header.length)
+      .setFontColors(anomalyItemsFonts)
+    }
+  }
+
+  debugRows.unshift(getHeaders('AdGroups').parameterRange.getValues()[0]
+                                   .concat(testMetrics,['Anomaly', 'period date', 'Period','entityType']))
+  debugAnomaliesFull.unshift(getHeaders('AdGroups').parameterRange.getValues()[0]
+                                   .concat(testMetrics,['Anomaly', 'period date', 'entityType']))
+  debugSpreadsheet.getActiveSheet().getRange(1,1,debugRows.length, debugRows[0].length).setValues(debugRows)
+  debugSpreadsheet.insertSheet('DECLINING').getRange(1,1,debugAnomaliesFull.length, debugAnomaliesFull[0].length).setValues(debugAnomaliesFull)
+  Logger.log("Report available at " + REPORT_URL);
+  Logger.log("Debug Report available at " + debugSpreadsheet.getUrl());
+  if (emailMessage) {
+      MailApp.sendEmail(email,
+                    'Extended Anomaly report',
+                    emailMessage);
+  }
+}
+
