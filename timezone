@@ -1,0 +1,9 @@
+function main() {
+  var tz = AdWordsApp.currentAccount().getTimeZone()
+  var endDate =new Date();
+  endDate.setDate(endDate.getDate()-1);
+  var startDate = new Date();
+  startDate.setDate(startDate.getDate()-7);
+  var formattedDate = function (mydate) {return Utilities.formatDate(mydate, tz, "YYYYMMdd")};
+  Logger.log(formattedDate(startDate) + " " + formattedDate(endDate));
+}
